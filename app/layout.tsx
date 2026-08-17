@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import '../styles/globals.css';
 import { Leaf, Home, Archive, FileText, Settings } from 'lucide-react';
-import { ViewContext, type ViewMode } from './view-context';
+import { ViewContext, TabContext, type ViewMode, type TabMode } from './view-context';
 
 type RootLayoutProps = {
   children: React.ReactNode;
@@ -11,12 +11,13 @@ type RootLayoutProps = {
 
 export default function RootLayout({ children }: RootLayoutProps) {
   const [activeView, setActiveView] = useState<ViewMode>('enterprise');
+  const [activeTab, setActiveTab] = useState<TabMode>('dashboard');
 
-  const navItems = [
-    { label: 'Dashboard', icon: Home },
-    { label: 'Decommissioning Logs', icon: Archive },
-    { label: 'Compliance Packets', icon: FileText },
-    { label: 'Settings', icon: Settings }
+  const navItems: { label: string; icon: typeof Home; tab: TabMode }[] = [
+    { label: 'Dashboard', icon: Home, tab: 'dashboard' },
+    { label: 'Decommissioning Logs', icon: Archive, tab: 'logs' },
+    { label: 'Compliance Packets', icon: FileText, tab: 'packets' },
+    { label: 'Settings', icon: Settings, tab: 'settings' }
   ];
 
   return (
@@ -38,23 +39,25 @@ export default function RootLayout({ children }: RootLayoutProps) {
 
             <nav className="px-4 py-5">
               <ul className="space-y-2">
-                {navItems.map((item, index) => {
+                {navItems.map((item) => {
                   const Icon = item.icon;
-                  const active = index === 0;
+                  const active = activeTab === item.tab;
                   return (
                     <li key={item.label}>
-                      <a
-                        href="#"
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(item.tab)}
+                        aria-current={active ? 'page' : undefined}
                         className={[
-                          'flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-colors',
+                          'flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors',
                           active
-                            ? 'bg-slate-800 text-white'
+                            ? 'bg-emerald-600 text-white shadow-sm'
                             : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                         ].join(' ')}
                       >
-                        <Icon className={active ? 'text-emerald-300' : 'text-slate-400'} size={18} />
+                        <Icon className={active ? 'text-white' : 'text-slate-400'} size={18} />
                         <span>{item.label}</span>
-                      </a>
+                      </button>
                     </li>
                   );
                 })}
@@ -120,7 +123,9 @@ export default function RootLayout({ children }: RootLayoutProps) {
                     : 'Regulatory oversight and compliance readiness snapshot.'}
                 </p>
                 <div className="mt-6">
-                  <ViewContext.Provider value={activeView}>{children}</ViewContext.Provider>
+                  <ViewContext.Provider value={activeView}>
+                    <TabContext.Provider value={{ activeTab, setActiveTab }}>{children}</TabContext.Provider>
+                  </ViewContext.Provider>
                 </div>
               </div>
             </div>

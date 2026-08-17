@@ -10,18 +10,21 @@ import {
   Building2,
   CheckCircle2,
   Clock3,
+  Download,
   FileStack,
   FileText,
   Gavel,
   Loader2,
+  Package,
   Scale,
+  Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Truck,
   X,
 } from "lucide-react";
-import { useActiveView, type ViewMode } from "./view-context";
+import { useActiveView, useActiveTab, type ViewMode } from "./view-context";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
@@ -46,6 +49,15 @@ interface AuditSite {
   declaredMt: number;
   predictedMt: number;
   flagged: boolean;
+}
+
+type PacketStatus = "Submitted to DOE" | "Pending Pickup";
+
+interface CompliancePacket {
+  id: string;
+  name: string;
+  date: string;
+  status: PacketStatus;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -113,8 +125,35 @@ const AUDIT_SITES: AuditSite[] = [
 
 const PACKET_STEPS = [
   { threshold: 34, label: "DOE e-SWIS Consignment Note", detail: "Drafted via API" },
-  { threshold: 67, label: "Corporate ESG Monthly Carbon & Material Ledger", detail: "Updated" },
-  { threshold: 100, label: "Cross-Border E-Waste Export Manifest (Customs Form C2)", detail: "Generated" },
+  { threshold: 67, label: "Corporate ESG Scope 3 Carbon Ledger", detail: "Updated: -12.4 Tons CO2" },
+  { threshold: 100, label: "Cross-Border E-Waste Export Manifest", detail: "Customs Form C2" },
+];
+
+const GENERATED_PACKETS: CompliancePacket[] = [
+  {
+    id: "PKT-4417",
+    name: "DOE e-SWIS Consignment Note — Batch 881-A",
+    date: "Aug 14, 2026",
+    status: "Submitted to DOE",
+  },
+  {
+    id: "PKT-4402",
+    name: "Cross-Border Export Manifest — Batch 883-C",
+    date: "Aug 11, 2026",
+    status: "Pending Pickup",
+  },
+  {
+    id: "PKT-4391",
+    name: "Corporate ESG Scope 3 Carbon Ledger — July Cycle",
+    date: "Aug 03, 2026",
+    status: "Submitted to DOE",
+  },
+  {
+    id: "PKT-4378",
+    name: "DOE e-SWIS Consignment Note — Batch 879-B",
+    date: "Jul 29, 2026",
+    status: "Submitted to DOE",
+  },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -477,19 +516,11 @@ function LegalReasoningModal({
 
 function DeclareOnceBanner({
   isGenerating,
-  progress,
-  done,
   onGenerate,
-  onReset,
 }: {
   isGenerating: boolean;
-  progress: number;
-  done: boolean;
   onGenerate: () => void;
-  onReset: () => void;
 }) {
-  const idle = !isGenerating && !done;
-
   return (
     <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dark)] p-6 shadow-lg sm:p-7">
       <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
@@ -502,72 +533,142 @@ function DeclareOnceBanner({
             Generate a complete compliance package instantly
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-white/80">
-            One click drafts the e-SWIS Consignment Note, ESG Inventory, and Export Manifest — cross-referenced
+            One click drafts the e-SWIS Consignment Note, ESG Carbon Ledger, and Export Manifest — cross-referenced
             from the same audited record.
           </p>
         </div>
 
-        {idle && (
-          <button
-            type="button"
-            onClick={onGenerate}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90"
-          >
-            Generate Compliance Packet
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        )}
-
-        {done && (
-          <button
-            type="button"
-            onClick={onReset}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-white/40 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
-          >
-            Generate Another Packet
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={isGenerating}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Generating…
+            </>
+          ) : (
+            <>
+              Generate Compliance Packet
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </button>
       </div>
+    </section>
+  );
+}
 
-      {(isGenerating || done) && (
-        <div className="mt-6 rounded-xl bg-white/10 p-4 sm:p-5">
-          <div className="flex items-center justify-between text-xs font-semibold text-white/80">
-            <span>{done ? "Packet ready" : "Drafting documents…"}</span>
+/* -------------------------------------------------------------------------- */
+/*  Compliance packet generation modal                                        */
+/* -------------------------------------------------------------------------- */
+
+function CompliancePacketModal({
+  progress,
+  isGenerating,
+  done,
+  onClose,
+  onDownload,
+}: {
+  progress: number;
+  isGenerating: boolean;
+  done: boolean;
+  onClose: () => void;
+  onDownload: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && done) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, done]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      onClick={() => done && onClose()}
+    >
+      <div
+        className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-slate-50/60 px-6 py-5">
+          <div>
+            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Declare Once
+            </p>
+            <h3 className="mt-1 flex items-center gap-2 text-lg font-semibold text-slate-900">
+              <Sparkles className="h-5 w-5 text-[var(--accent)]" />
+              {done ? "Compliance Packet Ready" : "Generating Compliance Packet"}
+            </h3>
+          </div>
+          {done && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+
+        <div className="p-6">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+            <span>{done ? "All documents drafted" : "Drafting documents…"}</span>
             <span className="font-mono">{progress}%</span>
           </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/20">
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
             <div
-              className="h-full rounded-full bg-white transition-[width] duration-150 ease-linear"
+              className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150 ease-linear"
               style={{ width: `${progress}%` }}
             />
           </div>
 
-          <ul className="mt-4 space-y-2.5">
+          <ul className="mt-5 space-y-3">
             {PACKET_STEPS.map((step) => {
               const checked = progress >= step.threshold;
               return (
-                <li key={step.label} className="flex items-center gap-3 text-sm text-white">
+                <li key={step.label} className="flex items-center gap-3 text-sm">
                   <span
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${
-                      checked ? "border-white bg-white text-[var(--accent-dark)]" : "border-white/40 text-transparent"
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition ${
+                      checked
+                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                        : "border-slate-200 text-transparent"
                     }`}
                   >
                     {checked ? (
                       <CheckCircle2 className="h-4 w-4" />
                     ) : isGenerating ? (
-                      <Loader2 className="h-3 w-3 animate-spin text-white/60" />
+                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
                     ) : null}
                   </span>
-                  <span className={checked ? "text-white" : "text-white/60"}>
-                    {step.label} <span className="text-white/50">({step.detail})</span>
+                  <span className={checked ? "font-medium text-slate-900" : "text-slate-400"}>
+                    {step.label}{" "}
+                    <span className={checked ? "text-slate-500" : "text-slate-400"}>({step.detail})</span>
                   </span>
                 </li>
               );
             })}
           </ul>
+
+          {done && (
+            <button
+              type="button"
+              onClick={onDownload}
+              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+            >
+              <Download className="h-4 w-4" />
+              Download Signed Bundle (ZIP/PDF)
+            </button>
+          )}
         </div>
-      )}
-    </section>
+      </div>
+    </div>
   );
 }
 
@@ -654,21 +755,83 @@ function QueueTable({ queue, onInspect }: { queue: QueueBatch[]; onInspect: (b: 
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Compliance Packets tab                                                    */
+/* -------------------------------------------------------------------------- */
+
+function CompliancePacketsView({ packets }: { packets: CompliancePacket[] }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+        <Package className="h-5 w-5 text-slate-600" />
+        <h2 className="text-base font-semibold text-slate-900">Generated Compliance Packets</h2>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {packets.map((packet) => (
+          <li
+            key={packet.id}
+            className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
+                <FileText className="h-4 w-4 text-[var(--accent)]" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{packet.name}</p>
+                <p className="mt-0.5 font-mono text-xs text-slate-500">
+                  {packet.id} · {packet.date}
+                </p>
+              </div>
+            </div>
+            {packet.status === "Submitted to DOE" ? (
+              <Pill tone="green">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Submitted to DOE
+              </Pill>
+            ) : (
+              <Pill tone="orange">
+                <Clock3 className="h-3.5 w-3.5" />
+                Pending Pickup
+              </Pill>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Settings tab (placeholder)                                                */
+/* -------------------------------------------------------------------------- */
+
+function SettingsPanel() {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+        <SettingsIcon className="h-6 w-6 text-slate-500" />
+      </div>
+      <h2 className="mt-4 text-base font-semibold text-slate-900">Workspace Settings</h2>
+      <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
+        Notification preferences, DOE API credentials, and user roles will live here in a future release.
+      </p>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Enterprise view                                                            */
 /* -------------------------------------------------------------------------- */
 
 function EnterpriseView({
   queue,
   onInspect,
-  packetState,
+  isGenerating,
   onGenerate,
-  onResetPacket,
 }: {
   queue: QueueBatch[];
   onInspect: (b: QueueBatch) => void;
-  packetState: { isGenerating: boolean; progress: number; done: boolean };
+  isGenerating: boolean;
   onGenerate: () => void;
-  onResetPacket: () => void;
 }) {
   const pendingCount = queue.filter((b) => b.status === "pending").length;
 
@@ -709,13 +872,7 @@ function EnterpriseView({
         </div>
       </section>
 
-      <DeclareOnceBanner
-        isGenerating={packetState.isGenerating}
-        progress={packetState.progress}
-        done={packetState.done}
-        onGenerate={onGenerate}
-        onReset={onResetPacket}
-      />
+      <DeclareOnceBanner isGenerating={isGenerating} onGenerate={onGenerate} />
 
       <QueueTable queue={queue} onInspect={onInspect} />
     </div>
@@ -842,34 +999,54 @@ function RegulatorView() {
 
 export default function Page() {
   const activeView = useActiveView();
+  const { activeTab, setActiveTab } = useActiveTab();
+
   const [queue, setQueue] = useState<QueueBatch[]>(INITIAL_QUEUE);
   const [selectedLog, setSelectedLog] = useState<QueueBatch | null>(null);
-  const [isGeneratingPacket, setIsGeneratingPacket] = useState(false);
-  const [packetProgress, setPacketProgress] = useState(0);
-  const [packetDone, setPacketDone] = useState(false);
+  const [packets, setPackets] = useState<CompliancePacket[]>(GENERATED_PACKETS);
 
-  // Progress animation for the compliance packet generator.
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [packetGenerated, setPacketGenerated] = useState(false);
+  const [showPacketModal, setShowPacketModal] = useState(false);
+  const [packetProgress, setPacketProgress] = useState(0);
+
+  // Progress animation for the compliance packet generator. The moment it
+  // completes, the new packet lands in the Compliance Packets tab — the
+  // "Download" button just closes the modal and takes the user there.
   useEffect(() => {
-    if (!isGeneratingPacket) return;
+    if (!isGenerating) return;
     if (packetProgress >= 100) {
-      setIsGeneratingPacket(false);
-      setPacketDone(true);
+      setIsGenerating(false);
+      setPacketGenerated(true);
+      setPackets((prev) => [
+        {
+          id: `PKT-${Math.floor(1000 + Math.random() * 9000)}`,
+          name: "Declare Once Compliance Bundle",
+          date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
+          status: "Pending Pickup",
+        },
+        ...prev,
+      ]);
       return;
     }
     const t = setTimeout(() => setPacketProgress((p) => Math.min(100, p + 4)), 70);
     return () => clearTimeout(t);
-  }, [isGeneratingPacket, packetProgress]);
+  }, [isGenerating, packetProgress]);
 
   function handleGeneratePacket() {
-    setPacketDone(false);
+    setPacketGenerated(false);
     setPacketProgress(0);
-    setIsGeneratingPacket(true);
+    setIsGenerating(true);
+    setShowPacketModal(true);
   }
 
-  function handleResetPacket() {
-    setPacketDone(false);
-    setPacketProgress(0);
-    setIsGeneratingPacket(false);
+  function handleCloseModal() {
+    setShowPacketModal(false);
+  }
+
+  function handleDownloadBundle() {
+    setShowPacketModal(false);
+    setActiveTab("packets");
   }
 
   function handleApprove(id: string) {
@@ -906,17 +1083,23 @@ export default function Page() {
         } as CSSProperties
       }
     >
-      {isRegulator ? (
-        <RegulatorView />
-      ) : (
-        <EnterpriseView
-          queue={queue}
-          onInspect={setSelectedLog}
-          packetState={{ isGenerating: isGeneratingPacket, progress: packetProgress, done: packetDone }}
-          onGenerate={handleGeneratePacket}
-          onResetPacket={handleResetPacket}
-        />
-      )}
+      {activeTab === "dashboard" &&
+        (isRegulator ? (
+          <RegulatorView />
+        ) : (
+          <EnterpriseView
+            queue={queue}
+            onInspect={setSelectedLog}
+            isGenerating={isGenerating}
+            onGenerate={handleGeneratePacket}
+          />
+        ))}
+
+      {activeTab === "logs" && <QueueTable queue={queue} onInspect={setSelectedLog} />}
+
+      {activeTab === "packets" && <CompliancePacketsView packets={packets} />}
+
+      {activeTab === "settings" && <SettingsPanel />}
 
       {selectedLog && (
         <LegalReasoningModal
@@ -924,6 +1107,16 @@ export default function Page() {
           onClose={() => setSelectedLog(null)}
           onApprove={handleApprove}
           onOverride={handleOverride}
+        />
+      )}
+
+      {showPacketModal && (
+        <CompliancePacketModal
+          progress={packetProgress}
+          isGenerating={isGenerating}
+          done={packetGenerated}
+          onClose={handleCloseModal}
+          onDownload={handleDownloadBundle}
         />
       )}
     </div>

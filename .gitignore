@@ -3,4 +3,6 @@ node_modules/
 out/
 build/
 .env*.local
+.env.local
+.env
 .DS_Store
