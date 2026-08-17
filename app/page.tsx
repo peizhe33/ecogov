@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { jsPDF } from "jspdf";
 import {
   AlertTriangle,
   ArrowRight,
@@ -58,6 +59,17 @@ interface CompliancePacket {
   name: string;
   date: string;
   status: PacketStatus;
+}
+
+interface ClassificationResult {
+  batchId: string;
+  hardwareType: string;
+  primaryCode: string;
+  confidence: number;
+  legalCitation: string;
+  ruledOutCode: string;
+  ruledOutReason: string;
+  requiresHumanReview: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -356,7 +368,7 @@ function LegalReasoningModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm pointer-events-auto"
       onClick={onClose}
     >
       <div
@@ -376,7 +388,7 @@ function LegalReasoningModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="cursor-pointer rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             aria-label="Close reasoning modal"
           >
             <X className="h-5 w-5" />
@@ -469,7 +481,7 @@ function LegalReasoningModal({
               <button
                 type="button"
                 onClick={() => setOverrideMode(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="cursor-pointer rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 Cancel
               </button>
@@ -480,7 +492,7 @@ function LegalReasoningModal({
                   onOverride(batch.id, opt.code, opt.label);
                   setOverrideMode(false);
                 }}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+                className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
               >
                 Confirm Override
               </button>
@@ -490,14 +502,14 @@ function LegalReasoningModal({
               <button
                 type="button"
                 onClick={() => setOverrideMode(true)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="cursor-pointer rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 Override Code
               </button>
               <button
                 type="button"
                 onClick={() => onApprove(batch.id)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
               >
                 <BadgeCheck className="h-4 w-4" />
                 Approve &amp; Apply Legal Digital Signature
@@ -542,7 +554,7 @@ function DeclareOnceBanner({
           type="button"
           onClick={onGenerate}
           disabled={isGenerating}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
+          className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isGenerating ? (
             <>
@@ -588,7 +600,7 @@ function CompliancePacketModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm pointer-events-auto"
       onClick={() => done && onClose()}
     >
       <div
@@ -609,7 +621,7 @@ function CompliancePacketModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              className="cursor-pointer rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
               aria-label="Close"
             >
               <X className="h-5 w-5" />
@@ -660,7 +672,7 @@ function CompliancePacketModal({
             <button
               type="button"
               onClick={onDownload}
-              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+              className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
             >
               <Download className="h-4 w-4" />
               Download Signed Bundle (ZIP/PDF)
@@ -676,7 +688,17 @@ function CompliancePacketModal({
 /*  Decommissioning queue table                                               */
 /* -------------------------------------------------------------------------- */
 
-function QueueTable({ queue, onInspect }: { queue: QueueBatch[]; onInspect: (b: QueueBatch) => void }) {
+function QueueTable({
+  queue,
+  onInspect,
+  isClassifying,
+  classifyingBatchId,
+}: {
+  queue: QueueBatch[];
+  onInspect: (b: QueueBatch) => void | Promise<void>;
+  isClassifying: boolean;
+  classifyingBatchId: string | null;
+}) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
@@ -729,15 +751,23 @@ function QueueTable({ queue, onInspect }: { queue: QueueBatch[]; onInspect: (b: 
                     <button
                       type="button"
                       onClick={() => onInspect(batch)}
-                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+                      disabled={isClassifying}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                      Inspect Legal AI Reasoning
+                      {isClassifying && classifyingBatchId === batch.id ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Inspecting…
+                        </>
+                      ) : (
+                        "Inspect Legal AI Reasoning"
+                      )}
                     </button>
                   ) : batch.interactive ? (
                     <button
                       type="button"
                       onClick={() => onInspect(batch)}
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      className="cursor-pointer rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
                     >
                       View Record
                     </button>
@@ -825,11 +855,15 @@ function SettingsPanel() {
 function EnterpriseView({
   queue,
   onInspect,
+  isClassifying,
+  classifyingBatchId,
   isGenerating,
   onGenerate,
 }: {
   queue: QueueBatch[];
-  onInspect: (b: QueueBatch) => void;
+  onInspect: (b: QueueBatch) => void | Promise<void>;
+  isClassifying: boolean;
+  classifyingBatchId: string | null;
   isGenerating: boolean;
   onGenerate: () => void;
 }) {
@@ -874,7 +908,12 @@ function EnterpriseView({
 
       <DeclareOnceBanner isGenerating={isGenerating} onGenerate={onGenerate} />
 
-      <QueueTable queue={queue} onInspect={onInspect} />
+      <QueueTable
+        queue={queue}
+        onInspect={onInspect}
+        isClassifying={isClassifying}
+        classifyingBatchId={classifyingBatchId}
+      />
     </div>
   );
 }
@@ -1005,10 +1044,37 @@ export default function Page() {
   const [selectedLog, setSelectedLog] = useState<QueueBatch | null>(null);
   const [packets, setPackets] = useState<CompliancePacket[]>(GENERATED_PACKETS);
 
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [classifyingBatchId, setClassifyingBatchId] = useState<string | null>(null);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [packetGenerated, setPacketGenerated] = useState(false);
   const [showPacketModal, setShowPacketModal] = useState(false);
   const [packetProgress, setPacketProgress] = useState(0);
+
+  function mergeClassification(batch: QueueBatch, result: ClassificationResult): QueueBatch {
+    const confidence = Math.max(0, Math.min(100, result.confidence));
+    return {
+      ...batch,
+      id: result.batchId || batch.id,
+      hardwareType: result.hardwareType || batch.hardwareType,
+      confidence,
+      status: result.requiresHumanReview ? "pending" : "approved",
+      interactive: result.requiresHumanReview,
+      ai: {
+        ...batch.ai,
+        code: result.primaryCode || batch.ai.code,
+        confidence,
+        citation: result.legalCitation || batch.ai.citation,
+      },
+      ruledOut: {
+        ...batch.ruledOut,
+        code: result.ruledOutCode || batch.ruledOut.code,
+        confidence: Math.max(0, 100 - confidence),
+        reason: result.ruledOutReason || batch.ruledOut.reason,
+      },
+    };
+  }
 
   // Progress animation for the compliance packet generator. The moment it
   // completes, the new packet lands in the Compliance Packets tab — the
@@ -1044,7 +1110,28 @@ export default function Page() {
     setShowPacketModal(false);
   }
 
+  function downloadComplianceBundle() {
+    const doc = new jsPDF();
+    const timestamp = new Date().toISOString();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("EcoGov AI — DOE Compliance Packet", 20, 24);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.text("Consignment Reference: e-SWIS / 2026-884D", 20, 40);
+    doc.text("Classification: SW110 — Electrical and Electronic Assemblies", 20, 50);
+    doc.text("Mass / Weight: 320 kg (Dell Motherboard Assemblies)", 20, 60);
+    doc.text("Environmental Authority: Jabatan Alam Sekitar (DOE) Johor", 20, 70);
+    doc.text("Verification Hash: SHA256: 9e107d9d372bb6826bd81d3542a419d6", 20, 80);
+    doc.text(`Timestamp: ${timestamp}`, 20, 90);
+
+    doc.save("EcoGov_Compliance_Packet_884D.pdf");
+  }
+
   function handleDownloadBundle() {
+    downloadComplianceBundle();
     setShowPacketModal(false);
     setActiveTab("packets");
   }
@@ -1065,8 +1152,39 @@ export default function Page() {
     setSelectedLog(null);
   }
 
+  async function handleInspect(batch: QueueBatch) {
+    setIsClassifying(true);
+    setClassifyingBatchId(batch.id);
+
+    try {
+      const response = await fetch("/api/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifestText: batch.extractedText }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Classification request failed");
+      }
+
+      const result = (await response.json()) as ClassificationResult;
+      const merged = mergeClassification(batch, result);
+
+      setQueue((q) => q.map((b) => (b.id === batch.id ? merged : b)));
+      setSelectedLog(merged);
+    } catch {
+      // Fallback to showing the existing record if the request fails unexpectedly.
+      setSelectedLog(batch);
+    } finally {
+      setIsClassifying(false);
+      setClassifyingBatchId(null);
+    }
+  }
+
   const theme = THEME[activeView];
   const isRegulator = activeView === "regulator";
+  const isLegalModalOpen = selectedLog !== null;
+  const isPacketModalOpen = showPacketModal && (isGenerating || packetGenerated);
 
   // No header, toggle, or breadcrumb here — the layout's sidebar, top bar,
   // view toggle, and page title already cover that. This component only
@@ -1089,19 +1207,28 @@ export default function Page() {
         ) : (
           <EnterpriseView
             queue={queue}
-            onInspect={setSelectedLog}
+            onInspect={handleInspect}
+            isClassifying={isClassifying}
+            classifyingBatchId={classifyingBatchId}
             isGenerating={isGenerating}
             onGenerate={handleGeneratePacket}
           />
         ))}
 
-      {activeTab === "logs" && <QueueTable queue={queue} onInspect={setSelectedLog} />}
+      {activeTab === "logs" && (
+        <QueueTable
+          queue={queue}
+          onInspect={handleInspect}
+          isClassifying={isClassifying}
+          classifyingBatchId={classifyingBatchId}
+        />
+      )}
 
       {activeTab === "packets" && <CompliancePacketsView packets={packets} />}
 
       {activeTab === "settings" && <SettingsPanel />}
 
-      {selectedLog && (
+      {isLegalModalOpen && selectedLog && (
         <LegalReasoningModal
           batch={selectedLog}
           onClose={() => setSelectedLog(null)}
@@ -1110,7 +1237,7 @@ export default function Page() {
         />
       )}
 
-      {showPacketModal && (
+      {isPacketModalOpen && (
         <CompliancePacketModal
           progress={packetProgress}
           isGenerating={isGenerating}
