@@ -156,6 +156,14 @@ A short demo GIF can also showcase the complete workflow:
 * **Document Generation:** `jspdf`
 
 ---
+## ⚙️ Prerequisites
+
+Ensure you have the following installed:
+* [Node.js](https://nodejs.org/) (v18.17.0 or higher recommended)
+* npm (bundled with Node.js) or [pnpm](https://pnpm.io/)
+* A [Google Gemini API Key](https://aistudio.google.com/)
+
+---
 
 # 🚀 Getting Started
 
@@ -163,7 +171,6 @@ A short demo GIF can also showcase the complete workflow:
 
 ```bash
 git clone https://github.com/peizhe33/ecogov.git
-cd Prototype
 npm install
 ```
 
