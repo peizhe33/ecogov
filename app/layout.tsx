@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import '../styles/globals.css';
-import { Leaf, Home, Archive, FileText, Settings } from 'lucide-react';
+import { Leaf, Home, ClipboardEdit, Archive, FileText, Settings } from 'lucide-react';
 import { ViewContext, TabContext, type ViewMode, type TabMode } from './view-context';
 
 type RootLayoutProps = {
@@ -15,6 +15,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
 
   const navItems: { label: string; icon: typeof Home; tab: TabMode }[] = [
     { label: 'Dashboard', icon: Home, tab: 'dashboard' },
+    { label: 'Waste Intake', icon: ClipboardEdit, tab: 'intake' },
     { label: 'Decommissioning Logs', icon: Archive, tab: 'logs' },
     { label: 'Compliance Packets', icon: FileText, tab: 'packets' },
     { label: 'Settings', icon: Settings, tab: 'settings' }

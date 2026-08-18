@@ -12,7 +12,7 @@ export function useActiveView(): ViewMode {
   return useContext(ViewContext);
 }
 
-export type TabMode = "dashboard" | "logs" | "packets" | "settings";
+export type TabMode = "dashboard" | "intake" | "logs" | "packets" | "settings";
 
 // Same pattern as ViewContext: the sidebar lives in layout.tsx, so layout
 // owns the active-tab state and the setter, and page.tsx reads + drives it

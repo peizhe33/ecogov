@@ -10,6 +10,7 @@ import {
   BookMarked,
   Building2,
   CheckCircle2,
+  ClipboardEdit,
   Clock3,
   Download,
   FileStack,
@@ -43,6 +44,9 @@ interface QueueBatch {
   extractedText: string;
   ai: { code: string; label: string; confidence: number; citation: string };
   ruledOut: { code: string; label: string; confidence: number; reason: string };
+  requiresHumanReview?: boolean;
+  hasBeenInspected?: boolean;
+  overrideJustification?: string;
 }
 
 interface AuditSite {
@@ -59,6 +63,7 @@ interface CompliancePacket {
   name: string;
   date: string;
   status: PacketStatus;
+  batches?: QueueBatch[];
 }
 
 interface ClassificationResult {
@@ -126,6 +131,47 @@ const INITIAL_QUEUE: QueueBatch[] = [
 const OVERRIDE_OPTIONS = [
   { code: "SW322", label: "Non-Halogenated Organic Solvents" },
   { code: "SW409", label: "Spent Corrosive / Acidic Solutions" },
+];
+
+const OVERRIDE_JUSTIFICATION_PRESETS = [
+  "Incidental surface residue (<1% total mass)",
+  "Verified via on-site technical inspection",
+  "Lab sample confirms non-hazardous solvent",
+];
+
+interface IntakePreset {
+  id: string;
+  label: string;
+  manifestText: string;
+  weightKg: number;
+}
+
+const INTAKE_PRESETS: IntakePreset[] = [
+  {
+    id: "preset-r740",
+    label: "Dell PowerEdge R740 Racks (450kg)",
+    manifestText: "Dell PowerEdge R740 Racks (450kg) — Intact chassis & power supplies",
+    weightKg: 450,
+  },
+  {
+    id: "preset-884d",
+    label: "Batch 884-D: Circuit Boards (320kg)",
+    manifestText: "Batch 884-D: 320kg circuit boards with trace isopropyl cleaning solvent",
+    weightKg: 320,
+  },
+  {
+    id: "preset-apc-ups",
+    label: "APC Smart-UPS Battery Packs (180kg)",
+    manifestText: "APC Smart-UPS Modular Battery Packs (180kg) — Leaking lead-acid cells",
+    weightKg: 180,
+  },
+];
+
+const INTAKE_FACILITIES = [
+  "Johor Data Center Alpha — Dock 2",
+  "Penang Assembly Facility — Bay 3",
+  "Kulim Hi-Tech Park — Receiving Dock",
+  "Bayan Lepas Logistics Hub — Dock 1",
 ];
 
 const AUDIT_SITES: AuditSite[] = [
@@ -353,10 +399,15 @@ function LegalReasoningModal({
   batch: QueueBatch;
   onClose: () => void;
   onApprove: (id: string) => void;
-  onOverride: (id: string, code: string, label: string) => void;
+  onOverride: (id: string, code: string, label: string, justification: string) => void;
 }) {
   const [overrideMode, setOverrideMode] = useState(false);
   const [overrideCode, setOverrideCode] = useState(OVERRIDE_OPTIONS[0].code);
+  const [justificationPreset, setJustificationPreset] = useState<string | null>(null);
+  const [justificationNote, setJustificationNote] = useState("");
+
+  const trimmedNote = justificationNote.trim();
+  const canConfirmOverride = Boolean(justificationPreset || trimmedNote);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -372,10 +423,10 @@ function LegalReasoningModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-slate-50/60 px-6 py-5 sm:px-7">
+        <div className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 bg-slate-50/60 px-6 py-5 sm:px-7">
           <div>
             <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               Needs Review · Batch #{batch.id}
@@ -395,6 +446,7 @@ function LegalReasoningModal({
           </button>
         </div>
 
+        <div className="flex-1 overflow-y-auto pr-1">
         <div className="grid gap-0 sm:grid-cols-2">
           {/* Left pane: extracted manifest text */}
           <div className="border-b border-slate-100 p-6 sm:border-b-0 sm:border-r sm:p-7">
@@ -470,12 +522,44 @@ function LegalReasoningModal({
                     </label>
                   ))}
                 </div>
+
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Override Justification
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {OVERRIDE_JUSTIFICATION_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() =>
+                          setJustificationPreset((current) => (current === preset ? null : preset))
+                        }
+                        className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                          justificationPreset === preset
+                            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-dark)]"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={justificationNote}
+                    onChange={(e) => setJustificationNote(e.target.value)}
+                    placeholder="Optional custom note…"
+                    className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-[var(--accent)] focus:outline-none"
+                  />
+                </div>
               </div>
             )}
           </div>
         </div>
+        </div>
 
-        <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end sm:px-7">
+        <div className="sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-3 border-t border-slate-100 bg-white px-6 py-5 sm:flex-row sm:justify-end sm:px-7">
           {overrideMode ? (
             <>
               <button
@@ -487,12 +571,14 @@ function LegalReasoningModal({
               </button>
               <button
                 type="button"
+                disabled={!canConfirmOverride}
                 onClick={() => {
                   const opt = OVERRIDE_OPTIONS.find((o) => o.code === overrideCode)!;
-                  onOverride(batch.id, opt.code, opt.label);
+                  const justification = [justificationPreset, trimmedNote].filter(Boolean).join(" — ");
+                  onOverride(batch.id, opt.code, opt.label, justification);
                   setOverrideMode(false);
                 }}
-                className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+                className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Confirm Override
               </button>
@@ -529,9 +615,13 @@ function LegalReasoningModal({
 function DeclareOnceBanner({
   isGenerating,
   onGenerate,
+  disabled,
+  disabledReason,
 }: {
   isGenerating: boolean;
   onGenerate: () => void;
+  disabled: boolean;
+  disabledReason: string | null;
 }) {
   return (
     <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dark)] p-6 shadow-lg sm:p-7">
@@ -550,24 +640,31 @@ function DeclareOnceBanner({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={isGenerating}
-          className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating…
-            </>
-          ) : (
-            <>
-              Generate Compliance Packet
-              <ArrowRight className="h-4 w-4" />
-            </>
+        <div className="flex shrink-0 flex-col items-stretch gap-2">
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={disabled || isGenerating}
+            title={disabledReason ?? undefined}
+            aria-disabled={disabled || isGenerating}
+            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[var(--accent-dark)] shadow-sm transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Generating…
+              </>
+            ) : (
+              <>
+                Generate Compliance Packet
+                <ArrowRight className="h-4 w-4" />
+              </>
+            )}
+          </button>
+          {disabledReason && !isGenerating && (
+            <p className="max-w-[260px] text-center text-xs font-medium text-white/80">{disabledReason}</p>
           )}
-        </button>
+        </div>
       </div>
     </section>
   );
@@ -688,17 +785,50 @@ function CompliancePacketModal({
 /*  Decommissioning queue table                                               */
 /* -------------------------------------------------------------------------- */
 
+function QueueEmptyState({ onGoToIntake }: { onGoToIntake: () => void }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+      <div className="mx-auto flex max-w-xl flex-col items-center text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)]">
+          <CheckCircle2 className="h-7 w-7 text-[var(--accent)]" />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold text-slate-900">Staging Queue Clear</h2>
+        <p className="mt-2 text-sm leading-relaxed text-slate-500">
+          All decommissioned batches have been bundled into signed compliance packets. Ingest new hardware from the
+          Waste Intake tab.
+        </p>
+        <button
+          type="button"
+          onClick={onGoToIntake}
+          className="mt-6 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--accent-dark)]"
+        >
+          Go to Waste Intake
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function QueueTable({
   queue,
   onInspect,
+  onViewRecord,
   isClassifying,
   classifyingBatchId,
+  onGoToIntake,
 }: {
   queue: QueueBatch[];
   onInspect: (b: QueueBatch) => void | Promise<void>;
+  onViewRecord: (b: QueueBatch) => void;
   isClassifying: boolean;
   classifyingBatchId: string | null;
+  onGoToIntake: () => void;
 }) {
+  if (queue.length === 0) {
+    return <QueueEmptyState onGoToIntake={onGoToIntake} />;
+  }
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
@@ -766,7 +896,7 @@ function QueueTable({
                   ) : batch.interactive ? (
                     <button
                       type="button"
-                      onClick={() => onInspect(batch)}
+                      onClick={() => onViewRecord(batch)}
                       className="cursor-pointer rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
                     >
                       View Record
@@ -781,6 +911,152 @@ function QueueTable({
         </table>
       </div>
     </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Waste Intake tab                                                          */
+/* -------------------------------------------------------------------------- */
+
+interface IntakeSubmitPayload {
+  manifestText: string;
+  weightKg: number;
+  facility: string;
+}
+
+function IntakeView({
+  isSubmitting,
+  onSubmit,
+}: {
+  isSubmitting: boolean;
+  onSubmit: (payload: IntakeSubmitPayload) => Promise<boolean>;
+}) {
+  const [facility, setFacility] = useState(INTAKE_FACILITIES[0]);
+  const [manifestText, setManifestText] = useState("");
+  const [weightKg, setWeightKg] = useState<number | "">("");
+  const [submitError, setSubmitError] = useState(false);
+
+  function applyPreset(preset: IntakePreset) {
+    setManifestText(preset.manifestText);
+    setWeightKg(preset.weightKg);
+    setSubmitError(false);
+  }
+
+  const canSubmit = manifestText.trim().length > 0 && weightKg !== "" && Number(weightKg) > 0 && !isSubmitting;
+
+  async function handleSubmit() {
+    if (!canSubmit) return;
+    setSubmitError(false);
+    const success = await onSubmit({ manifestText: manifestText.trim(), weightKg: Number(weightKg), facility });
+    if (success) {
+      setManifestText("");
+      setWeightKg("");
+    } else {
+      setSubmitError(true);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+        <SectionEyebrow>Warehouse Intake</SectionEyebrow>
+        <h2 className="mt-1 flex items-center gap-2 text-xl font-semibold text-slate-900">
+          <ClipboardEdit className="h-5 w-5 text-[var(--accent)]" />
+          Warehouse Waste Intake &amp; Triage
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Ingest physical hardware decommissioning logs for automated DOE classification.
+        </p>
+
+        <div className="mt-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick-Fill Presets</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {INTAKE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                className="cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-dark)]"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-5 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Facility</span>
+            <select
+              value={facility}
+              onChange={(e) => setFacility(e.target.value)}
+              className="mt-2 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+            >
+              {INTAKE_FACILITIES.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Declared Weight (kg)
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={weightKg}
+              onChange={(e) => setWeightKg(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 320"
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+            />
+          </label>
+        </div>
+
+        <label className="mt-5 block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Technician Decommissioning Log / Manifest Details
+          </span>
+          <textarea
+            value={manifestText}
+            onChange={(e) => setManifestText(e.target.value)}
+            rows={5}
+            placeholder="Describe the hardware, condition, and any hazardous materials or residual contaminants noted during teardown…"
+            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-800 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+          />
+        </label>
+
+        {submitError && (
+          <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-red-600">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Classification request failed — please try again.
+          </p>
+        )}
+
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--accent-dark)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Classifying…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                Run AI Classification &amp; Dispatch to Queue
+              </>
+            )}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -855,19 +1131,30 @@ function SettingsPanel() {
 function EnterpriseView({
   queue,
   onInspect,
+  onViewRecord,
   isClassifying,
   classifyingBatchId,
   isGenerating,
   onGenerate,
+  onGoToIntake,
 }: {
   queue: QueueBatch[];
   onInspect: (b: QueueBatch) => void | Promise<void>;
+  onViewRecord: (b: QueueBatch) => void;
   isClassifying: boolean;
   classifyingBatchId: string | null;
   isGenerating: boolean;
   onGenerate: () => void;
+  onGoToIntake: () => void;
 }) {
-  const pendingCount = queue.filter((b) => b.status === "pending").length;
+  const pendingCount = queue.filter((b) => b.status === "pending" || b.requiresHumanReview === true).length;
+  const canGenerate = queue.length > 0 && pendingCount === 0;
+  const generateDisabledReason =
+    queue.length === 0
+      ? "No batches are staged for compliance"
+      : pendingCount > 0
+        ? "Resolve pending AI reviews before generating"
+        : null;
 
   return (
     <div className="space-y-6">
@@ -906,13 +1193,20 @@ function EnterpriseView({
         </div>
       </section>
 
-      <DeclareOnceBanner isGenerating={isGenerating} onGenerate={onGenerate} />
+      <DeclareOnceBanner
+        isGenerating={isGenerating}
+        onGenerate={onGenerate}
+        disabled={!canGenerate}
+        disabledReason={generateDisabledReason}
+      />
 
       <QueueTable
         queue={queue}
         onInspect={onInspect}
+        onViewRecord={onViewRecord}
         isClassifying={isClassifying}
         classifyingBatchId={classifyingBatchId}
+        onGoToIntake={onGoToIntake}
       />
     </div>
   );
@@ -1046,21 +1340,30 @@ export default function Page() {
 
   const [isClassifying, setIsClassifying] = useState(false);
   const [classifyingBatchId, setClassifyingBatchId] = useState<string | null>(null);
+  const [isSubmittingIntake, setIsSubmittingIntake] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [packetGenerated, setPacketGenerated] = useState(false);
   const [showPacketModal, setShowPacketModal] = useState(false);
   const [packetProgress, setPacketProgress] = useState(0);
+  const [generatedQueueSnapshot, setGeneratedQueueSnapshot] = useState<QueueBatch[]>([]);
 
+  // Once the AI has classified a batch, the result is cached on the batch
+  // itself and treated as final: status flips to "approved", the human
+  // review flag is cleared, and the full reasoning payload is stored so the
+  // "View Record" button can reopen the modal instantly without re-hitting
+  // /api/classify.
   function mergeClassification(batch: QueueBatch, result: ClassificationResult): QueueBatch {
     const confidence = Math.max(0, Math.min(100, result.confidence));
     return {
       ...batch,
       id: result.batchId || batch.id,
       hardwareType: result.hardwareType || batch.hardwareType,
-      confidence,
-      status: result.requiresHumanReview ? "pending" : "approved",
-      interactive: result.requiresHumanReview,
+      confidence: result.confidence,
+      status: "approved",
+      interactive: true,
+      requiresHumanReview: false,
+      hasBeenInspected: true,
       ai: {
         ...batch.ai,
         code: result.primaryCode || batch.ai.code,
@@ -1076,30 +1379,38 @@ export default function Page() {
     };
   }
 
-  // Progress animation for the compliance packet generator. The moment it
-  // completes, the new packet lands in the Compliance Packets tab — the
-  // "Download" button just closes the modal and takes the user there.
+  // Progress animation for the compliance packet generator. When generation
+  // completes, snapshot the active queue into the packet record and clear the
+  // staging queue. The generated snapshot is retained for the PDF download.
   useEffect(() => {
     if (!isGenerating) return;
     if (packetProgress >= 100) {
+      const snapshot = queue.map((batch) => ({ ...batch }));
+      const packet: CompliancePacket = {
+        id: `PKT-${Math.floor(1000 + Math.random() * 9000)}`,
+        name: "Declare Once Compliance Bundle",
+        date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
+        status: "Pending Pickup",
+        batches: snapshot,
+      };
+
+      setGeneratedQueueSnapshot(snapshot);
+      setPackets((prev) => [packet, ...prev]);
+      setQueue([]);
       setIsGenerating(false);
       setPacketGenerated(true);
-      setPackets((prev) => [
-        {
-          id: `PKT-${Math.floor(1000 + Math.random() * 9000)}`,
-          name: "Declare Once Compliance Bundle",
-          date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-          status: "Pending Pickup",
-        },
-        ...prev,
-      ]);
+      setActiveTab("packets");
       return;
     }
     const t = setTimeout(() => setPacketProgress((p) => Math.min(100, p + 4)), 70);
     return () => clearTimeout(t);
-  }, [isGenerating, packetProgress]);
+  }, [isGenerating, packetProgress, queue, setActiveTab]);
 
   function handleGeneratePacket() {
+    const pendingCount = queue.filter((b) => b.status === "pending" || b.requiresHumanReview === true).length;
+    if (queue.length === 0 || pendingCount > 0) return;
+
+    setGeneratedQueueSnapshot([]);
     setPacketGenerated(false);
     setPacketProgress(0);
     setIsGenerating(true);
@@ -1110,42 +1421,828 @@ export default function Page() {
     setShowPacketModal(false);
   }
 
-  function downloadComplianceBundle() {
-    const doc = new jsPDF();
-    const timestamp = new Date().toISOString();
+  function downloadComplianceBundle(queue: QueueBatch[]) {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const margin = 16;
+    const contentWidth = pageWidth - margin * 2;
+
+    const timestamp = new Date();
+
+    const formattedDate = timestamp.toLocaleDateString("en-MY", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+    const formattedTime = timestamp.toLocaleTimeString("en-MY", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    const reportId = `EG-${timestamp.getFullYear()}-${Math.floor(
+      100000 + Math.random() * 900000
+    )}`;
+
+    const totalWeight = queue.reduce(
+      (sum, batch) => sum + (Number(batch.weightKg) || 0),
+      0
+    );
+
+    const approvedCount = queue.filter(
+      (batch) => batch.status === "approved"
+    ).length;
+
+    const pendingCount = queue.filter(
+      (batch) => batch.status === "pending"
+    ).length;
+
+    const overriddenCount = queue.filter(
+      (batch) => batch.status === "overridden"
+    ).length;
+
+    const averageConfidence =
+      queue.length > 0
+        ? queue.reduce(
+            (sum, batch) => sum + (Number(batch.confidence) || 0),
+            0
+          ) / queue.length
+        : 0;
+
+    /*
+    * --------------------------------------------------------------------------
+    * Helpers
+    * --------------------------------------------------------------------------
+    */
+
+    const addPageHeader = () => {
+      // Header line
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.4);
+      doc.line(margin, 13, pageWidth - margin, 13);
+
+      // Brand
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text("ECOGOV AI", margin, 10);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        "Environmental Compliance Intelligence Platform",
+        pageWidth - margin,
+        10,
+        { align: "right" }
+      );
+
+      // Footer
+      doc.setDrawColor(226, 232, 240);
+      doc.line(margin, pageHeight - 14, pageWidth - margin, pageHeight - 14);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+
+      doc.text(
+        "EcoGov AI • DOE Compliance Record",
+        margin,
+        pageHeight - 8
+      );
+
+      doc.text(
+        `Page ${doc.getNumberOfPages()}`,
+        pageWidth - margin,
+        pageHeight - 8,
+        { align: "right" }
+      );
+    };
+
+    const addSectionTitle = (
+      title: string,
+      subtitle?: string,
+      y?: number
+    ) => {
+      let currentY = y ?? 24;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text(title, margin, currentY);
+
+      if (subtitle) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text(subtitle, margin, currentY + 5);
+        currentY += 5;
+      }
+
+      return currentY;
+    };
+
+    const addNewPageIfNeeded = (requiredHeight: number, currentY: number) => {
+      if (currentY + requiredHeight > pageHeight - 22) {
+        doc.addPage();
+        addPageHeader();
+        return 24;
+      }
+
+      return currentY;
+    };
+
+    const statusLabel = (status: BatchStatus) => {
+      switch (status) {
+        case "approved":
+          return "APPROVED";
+        case "pending":
+          return "REVIEW";
+        case "overridden":
+          return "OVERRIDDEN";
+        default:
+          return String(status).toUpperCase();
+      }
+    };
+
+    /*
+    * --------------------------------------------------------------------------
+    * PAGE 1 — Executive summary
+    * --------------------------------------------------------------------------
+    */
+
+    addPageHeader();
+
+    // Hero
+    doc.setFillColor(15, 23, 42);
+    doc.roundedRect(margin, 22, contentWidth, 34, 3, 3, "F");
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("EcoGov AI — DOE Compliance Packet", 20, 24);
+    doc.setFontSize(19);
+    doc.setTextColor(255, 255, 255);
+    doc.text("DOE Decommissioning", margin + 7, 35);
+
+    doc.setFontSize(19);
+    doc.text("Compliance Report", margin + 7, 44);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    doc.text("Consignment Reference: e-SWIS / 2026-884D", 20, 40);
-    doc.text("Classification: SW110 — Electrical and Electronic Assemblies", 20, 50);
-    doc.text("Mass / Weight: 320 kg (Dell Motherboard Assemblies)", 20, 60);
-    doc.text("Environmental Authority: Jabatan Alam Sekitar (DOE) Johor", 20, 70);
-    doc.text("Verification Hash: SHA256: 9e107d9d372bb6826bd81d3542a419d6", 20, 80);
-    doc.text(`Timestamp: ${timestamp}`, 20, 90);
+    doc.setFontSize(7.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(
+      "Dynamic report generated directly from the current Decommissioning Queue",
+      margin + 7,
+      50
+    );
 
-    doc.save("EcoGov_Compliance_Packet_884D.pdf");
+    // Report metadata
+    let y = 66;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+
+    doc.text("REPORT ID", margin, y);
+    doc.text("GENERATED", margin + 52, y);
+    doc.text("AUTHORITY", margin + 110, y);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+
+    doc.text(reportId, margin, y + 6);
+    doc.text(`${formattedDate} • ${formattedTime}`, margin + 52, y + 6);
+    doc.text("Jabatan Alam Sekitar (DOE)", margin + 110, y + 6);
+
+    // Summary section
+    y = 88;
+
+    y = addSectionTitle(
+      "Compliance Overview",
+      "Snapshot of the queue at the time this report was generated.",
+      y
+    );
+
+    y += 9;
+
+    const cardGap = 4;
+    const cardWidth = (contentWidth - cardGap * 3) / 4;
+    const cardHeight = 25;
+
+    const summaryCards = [
+      {
+        label: "TOTAL BATCHES",
+        value: String(queue.length),
+      },
+      {
+        label: "TOTAL MASS",
+        value: `${totalWeight.toLocaleString()} kg`,
+      },
+      {
+        label: "PENDING REVIEW",
+        value: String(pendingCount),
+      },
+      {
+        label: "AVG. CONFIDENCE",
+        value: `${averageConfidence.toFixed(1)}%`,
+      },
+    ];
+
+    summaryCards.forEach((card, index) => {
+      const x = margin + index * (cardWidth + cardGap);
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(card.label, x + 4, y + 7);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(15, 23, 42);
+      doc.text(card.value, x + 4, y + 18);
+    });
+
+    y += cardHeight + 13;
+
+    // Status breakdown
+    y = addSectionTitle(
+      "Queue Status",
+      "Current classification state of all decommissioning batches.",
+      y
+    );
+
+    y += 9;
+
+    const statusRows = [
+      ["Approved", approvedCount],
+      ["Human Review", pendingCount],
+      ["Overridden", overriddenCount],
+    ];
+
+    statusRows.forEach(([label, count], index) => {
+      const rowY = y + index * 10;
+
+      doc.setFillColor(index % 2 === 0 ? 248 : 255, 250, 252);
+      doc.rect(margin, rowY - 5, contentWidth, 9, "F");
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(String(label), margin + 4, rowY);
+
+      doc.setFont("helvetica", "bold");
+      doc.text(String(count), pageWidth - margin - 4, rowY, {
+        align: "right",
+      });
+    });
+
+    y += statusRows.length * 10 + 12;
+
+    // Report scope
+    y = addSectionTitle(
+      "Report Scope",
+      "This document represents the queue state captured at generation time.",
+      y
+    );
+
+    y += 9;
+
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y, contentWidth, 28, 2, 2, "FD");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85);
+
+    const scopeText = doc.splitTextToSize(
+      `This compliance report contains ${queue.length} decommissioning ${
+        queue.length === 1 ? "batch" : "batches"
+      } currently present in the EcoGov AI Decommissioning Queue. ` +
+        `The report includes classification results, confidence scores, material weights, ` +
+        `review status, legal citations, and alternative classifications where available.`,
+      contentWidth - 10
+    );
+
+    doc.text(scopeText, margin + 5, y + 8);
+
+    /*
+    * --------------------------------------------------------------------------
+    * PAGE 2+ — Dynamic queue
+    * --------------------------------------------------------------------------
+    */
+
+    doc.addPage();
+    addPageHeader();
+
+    y = 24;
+
+    y = addSectionTitle(
+      "Decommissioning Queue",
+      `${queue.length} ${queue.length === 1 ? "batch" : "batches"} included in this compliance record.`,
+      y
+    );
+
+    y += 10;
+
+    /*
+    * Dynamic queue table
+    */
+
+    const colX = {
+      batch: margin,
+      hardware: margin + 22,
+      weight: margin + 95,
+      code: margin + 118,
+      confidence: margin + 140,
+      status: margin + 160,
+    };
+
+    // Table header
+    doc.setFillColor(15, 23, 42);
+    doc.roundedRect(margin, y, contentWidth, 9, 2, 2, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(255, 255, 255);
+
+    doc.text("BATCH", colX.batch + 3, y + 6);
+    doc.text("HARDWARE TYPE", colX.hardware, y + 6);
+    doc.text("WEIGHT", colX.weight, y + 6);
+    doc.text("DOE CODE", colX.code, y + 6);
+    doc.text("CONF.", colX.confidence, y + 6);
+    doc.text("STATUS", colX.status, y + 6);
+
+    y += 9;
+
+    queue.forEach((batch, index) => {
+      const hardwareLines = doc.splitTextToSize(
+        batch.hardwareType || "—",
+        70
+      );
+
+      const rowHeight = Math.max(13, hardwareLines.length * 4 + 7);
+
+      y = addNewPageIfNeeded(rowHeight + 2, y);
+
+      if (y === 24) {
+        // Re-render table header after page break
+        doc.setFillColor(15, 23, 42);
+        doc.roundedRect(margin, y, contentWidth, 9, 2, 2, "F");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.5);
+        doc.setTextColor(255, 255, 255);
+
+        doc.text("BATCH", colX.batch + 3, y + 6);
+        doc.text("HARDWARE TYPE", colX.hardware, y + 6);
+        doc.text("WEIGHT", colX.weight, y + 6);
+        doc.text("DOE CODE", colX.code, y + 6);
+        doc.text("CONF.", colX.confidence, y + 6);
+        doc.text("STATUS", colX.status, y + 6);
+
+        y += 9;
+      }
+
+      // Alternating row background
+      if (index % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(margin, y, contentWidth, rowHeight, "F");
+      }
+
+      // Batch
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`#${batch.id}`, colX.batch + 3, y + 7);
+
+      // Hardware
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text(hardwareLines, colX.hardware, y + 5);
+
+      // Weight
+      doc.text(
+        `${Number(batch.weightKg || 0).toLocaleString()} kg`,
+        colX.weight,
+        y + 7
+      );
+
+      // DOE code
+      doc.setFont("helvetica", "bold");
+      doc.text(batch.ai?.code || "—", colX.code, y + 7);
+
+      // Confidence
+      doc.setFont("helvetica", "normal");
+      doc.text(
+        `${Number(batch.confidence || 0).toFixed(0)}%`,
+        colX.confidence,
+        y + 7
+      );
+
+      // Status
+      doc.setFont("helvetica", "bold");
+      doc.text(statusLabel(batch.status), colX.status, y + 7);
+
+      y += rowHeight;
+
+      // Divider
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.line(margin, y, pageWidth - margin, y);
+    });
+
+    /*
+    * --------------------------------------------------------------------------
+    * Detailed classification records
+    * --------------------------------------------------------------------------
+    */
+
+    queue.forEach((batch) => {
+      doc.addPage();
+      addPageHeader();
+
+      let detailY = 24;
+
+      detailY = addSectionTitle(
+        `Batch #${batch.id}`,
+        "Detailed classification and compliance record",
+        detailY
+      );
+
+      detailY += 10;
+
+      // Status banner
+      const status = statusLabel(batch.status);
+
+      doc.setFillColor(
+        batch.status === "approved"
+          ? 236
+          : batch.status === "pending"
+          ? 254
+          : 255,
+        batch.status === "approved"
+          ? 253
+          : batch.status === "pending"
+          ? 249
+          : 247,
+        batch.status === "approved"
+          ? 245
+          : batch.status === "pending"
+          ? 195
+          : 237
+      );
+
+      doc.roundedRect(margin, detailY, contentWidth, 14, 2, 2, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+      doc.text(status, margin + 5, detailY + 9);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(71, 85, 105);
+      doc.text(
+        `${batch.confidence.toFixed(0)}% AI classification confidence`,
+        pageWidth - margin - 5,
+        detailY + 9,
+        { align: "right" }
+      );
+
+      detailY += 23;
+
+      // Basic information
+      detailY = addSectionTitle(
+        "Batch Information",
+        undefined,
+        detailY
+      );
+
+      detailY += 7;
+
+      const infoRows = [
+        ["Batch ID", `#${batch.id}`],
+        ["Hardware Type", batch.hardwareType || "—"],
+        [
+          "Declared Weight",
+          `${Number(batch.weightKg || 0).toLocaleString()} kg`,
+        ],
+        ["Workflow Status", status],
+      ];
+
+      infoRows.forEach(([label, value]) => {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(100, 116, 139);
+        doc.text(label.toUpperCase(), margin, detailY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+
+        const valueLines = doc.splitTextToSize(
+          value,
+          contentWidth - 48
+        );
+
+        doc.text(valueLines, margin + 48, detailY);
+
+        detailY += Math.max(8, valueLines.length * 4 + 4);
+      });
+
+      detailY += 5;
+
+      // AI classification
+      detailY = addSectionTitle(
+        "AI Classification",
+        "Primary classification generated by the EcoGov AI workflow.",
+        detailY
+      );
+
+      detailY += 8;
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(margin, detailY, contentWidth, 34, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      doc.text(batch.ai?.code || "—", margin + 6, detailY + 9);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(
+        batch.ai?.label || "Classification unavailable",
+        margin + 30,
+        detailY + 9
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text("CONFIDENCE", margin + 6, detailY + 18);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(
+        `${Number(batch.ai?.confidence ?? batch.confidence).toFixed(0)}%`,
+        margin + 6,
+        detailY + 24
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(100, 116, 139);
+      doc.text("LEGAL / REGULATORY CITATION", margin + 55, detailY + 18);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(51, 65, 85);
+
+      const citationLines = doc.splitTextToSize(
+        batch.ai?.citation || "No citation recorded.",
+        contentWidth - 67
+      );
+
+      doc.text(citationLines, margin + 55, detailY + 24);
+
+      detailY += 43;
+
+      // Alternative / ruled-out classification
+      if (batch.ruledOut?.code || batch.ruledOut?.reason) {
+        detailY = addNewPageIfNeeded(50, detailY);
+
+        detailY = addSectionTitle(
+          "Alternative Classification Considered",
+          "Classification option evaluated but not selected.",
+          detailY
+        );
+
+        detailY += 8;
+
+        doc.setFillColor(255, 251, 235);
+        doc.setDrawColor(253, 230, 138);
+        doc.roundedRect(margin, detailY, contentWidth, 35, 2, 2, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(146, 64, 14);
+
+        doc.text(
+          `${batch.ruledOut.code || "—"} — ${batch.ruledOut.label || "Alternative classification"}`,
+          margin + 6,
+          detailY + 9
+        );
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(120, 53, 15);
+
+        const reasonLines = doc.splitTextToSize(
+          batch.ruledOut.reason || "No reason recorded.",
+          contentWidth - 12
+        );
+
+        doc.text(reasonLines, margin + 6, detailY + 17);
+
+        detailY += 44;
+      }
+
+      // Manual override justification (audit trail)
+      if (batch.overrideJustification) {
+        detailY = addNewPageIfNeeded(45, detailY);
+
+        detailY = addSectionTitle(
+          "Manual Override Justification",
+          "Reviewer-recorded justification captured at the time of override.",
+          detailY
+        );
+
+        detailY += 8;
+
+        doc.setFillColor(241, 245, 249);
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(margin, detailY, contentWidth, 26, 2, 2, "FD");
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(51, 65, 85);
+
+        const justificationLines = doc.splitTextToSize(
+          batch.overrideJustification,
+          contentWidth - 12
+        );
+
+        doc.text(justificationLines, margin + 6, detailY + 9);
+
+        detailY += 35;
+      }
+
+      // Extracted manifest text
+      if (batch.extractedText) {
+        detailY = addNewPageIfNeeded(55, detailY);
+
+        detailY = addSectionTitle(
+          "Source Manifest / Extracted Evidence",
+          "Text associated with the queue record.",
+          detailY
+        );
+
+        detailY += 8;
+
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+
+        const evidenceLines = doc.splitTextToSize(
+          batch.extractedText,
+          contentWidth - 12
+        );
+
+        const evidenceHeight = Math.max(
+          28,
+          evidenceLines.length * 4.2 + 12
+        );
+
+        doc.roundedRect(
+          margin,
+          detailY,
+          contentWidth,
+          evidenceHeight,
+          2,
+          2,
+          "FD"
+        );
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(51, 65, 85);
+
+        doc.text(evidenceLines, margin + 6, detailY + 9);
+      }
+    });
+
+    /*
+    * --------------------------------------------------------------------------
+    * Final page — Declaration
+    * --------------------------------------------------------------------------
+    */
+
+    doc.addPage();
+    addPageHeader();
+
+    y = 26;
+
+    y = addSectionTitle(
+      "Compliance Declaration",
+      "System-generated record and audit metadata.",
+      y
+    );
+
+    y += 12;
+
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y, contentWidth, 58, 3, 3, "FD");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85);
+
+    const declaration = doc.splitTextToSize(
+      `This document was generated by EcoGov AI from the active Decommissioning Queue. ` +
+        `It represents the data and classification state available in the system at the ` +
+        `time of generation. Any subsequent changes to queue contents, classifications, ` +
+        `weights, approvals, or overrides will not retroactively modify this exported document.`,
+      contentWidth - 14
+    );
+
+    doc.text(declaration, margin + 7, y + 10);
+
+    y += 72;
+
+    const auditRows = [
+      ["Report ID", reportId],
+      ["Generated", `${formattedDate} ${formattedTime}`],
+      ["Queue Records", String(queue.length)],
+      ["Total Mass", `${totalWeight.toLocaleString()} kg`],
+      ["Approved", String(approvedCount)],
+      ["Human Review", String(pendingCount)],
+      ["Overridden", String(overriddenCount)],
+      ["Average Confidence", `${averageConfidence.toFixed(1)}%`],
+    ];
+
+    auditRows.forEach(([label, value], index) => {
+      const rowY = y + index * 9;
+
+      if (index % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(margin, rowY - 5, contentWidth, 9, "F");
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(label.toUpperCase(), margin + 4, rowY);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(value, pageWidth - margin - 4, rowY, {
+        align: "right",
+      });
+    });
+
+    /*
+    * --------------------------------------------------------------------------
+    * Save
+    * --------------------------------------------------------------------------
+    */
+
+    const safeDate = timestamp.toISOString().slice(0, 10);
+
+    doc.save(
+      `EcoGov_Compliance_Report_${safeDate}_${reportId}.pdf`
+    );
   }
 
   function handleDownloadBundle() {
-    downloadComplianceBundle();
+    if (generatedQueueSnapshot.length === 0) return;
+    downloadComplianceBundle(generatedQueueSnapshot);
     setShowPacketModal(false);
     setActiveTab("packets");
   }
 
   function handleApprove(id: string) {
-    setQueue((q) => q.map((b) => (b.id === id ? { ...b, status: "approved" as BatchStatus } : b)));
+    setQueue((q) =>
+      q.map((b) =>
+        b.id === id ? { ...b, status: "approved" as BatchStatus, requiresHumanReview: false } : b
+      )
+    );
     setSelectedLog(null);
   }
 
-  function handleOverride(id: string, code: string, label: string) {
+  function handleOverride(id: string, code: string, label: string, justification: string) {
     setQueue((q) =>
       q.map((b) =>
         b.id === id
-          ? { ...b, status: "overridden" as BatchStatus, ai: { ...b.ai, code, label } }
+          ? {
+              ...b,
+              status: "approved" as BatchStatus,
+              requiresHumanReview: false,
+              hasBeenInspected: true,
+              ai: { ...b.ai, code, label },
+              overrideJustification: justification,
+            }
           : b
       )
     );
@@ -1181,6 +2278,60 @@ export default function Page() {
     }
   }
 
+  async function handleIntakeSubmit(payload: IntakeSubmitPayload): Promise<boolean> {
+    setIsSubmittingIntake(true);
+
+    try {
+      const response = await fetch("/api/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          manifestText: payload.manifestText,
+          declaredWeightKg: payload.weightKg,
+          facility: payload.facility,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Classification request failed");
+      }
+
+      const result = (await response.json()) as ClassificationResult;
+      const confidence = Math.max(0, Math.min(100, result.confidence));
+
+      const newBatch: QueueBatch = {
+        id: result.batchId || `INT-${Date.now().toString().slice(-5)}`,
+        hardwareType: result.hardwareType || payload.manifestText.split(/[—-]/)[0].trim().slice(0, 60),
+        weightKg: payload.weightKg,
+        confidence,
+        status: result.requiresHumanReview ? "pending" : "approved",
+        interactive: result.requiresHumanReview,
+        requiresHumanReview: result.requiresHumanReview,
+        extractedText: payload.manifestText,
+        ai: {
+          code: result.primaryCode || "PENDING",
+          label: "AI-Determined Classification",
+          confidence,
+          citation: result.legalCitation || "",
+        },
+        ruledOut: {
+          code: result.ruledOutCode || "",
+          label: "",
+          confidence: Math.max(0, 100 - confidence),
+          reason: result.ruledOutReason || "",
+        },
+      };
+
+      setQueue((q) => [newBatch, ...q]);
+      setActiveTab("logs");
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setIsSubmittingIntake(false);
+    }
+  }
+
   const theme = THEME[activeView];
   const isRegulator = activeView === "regulator";
   const isLegalModalOpen = selectedLog !== null;
@@ -1208,19 +2359,25 @@ export default function Page() {
           <EnterpriseView
             queue={queue}
             onInspect={handleInspect}
+            onViewRecord={(batch) => setSelectedLog(batch)}
             isClassifying={isClassifying}
             classifyingBatchId={classifyingBatchId}
             isGenerating={isGenerating}
             onGenerate={handleGeneratePacket}
+            onGoToIntake={() => setActiveTab("intake")}
           />
         ))}
+
+      {activeTab === "intake" && <IntakeView isSubmitting={isSubmittingIntake} onSubmit={handleIntakeSubmit} />}
 
       {activeTab === "logs" && (
         <QueueTable
           queue={queue}
           onInspect={handleInspect}
+          onViewRecord={(batch) => setSelectedLog(batch)}
           isClassifying={isClassifying}
           classifyingBatchId={classifyingBatchId}
+          onGoToIntake={() => setActiveTab("intake")}
         />
       )}
 
