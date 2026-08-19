@@ -287,6 +287,17 @@ function buildSmoothPath(points: { x: number; y: number }[]) {
 }
 
 const MONTHS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov"];
+const FULL_MONTHS = [
+  "March 2026",
+  "April 2026",
+  "May 2026",
+  "June 2026",
+  "July 2026",
+  "August 2026",
+  "September 2026",
+  "October 2026",
+  "November 2026",
+];
 const VALUES = [18, 27, 36, 47, 58, 76, 88, 95, 99]; // storage utilization, %
 const CHART_W = 640;
 const CHART_H = 220;
@@ -300,6 +311,9 @@ function valueToY(v: number) {
 }
 
 function ForecastChart() {
+  const [activePointIndex, setActivePointIndex] = useState<number | null>(null);
+  const [isBreachHovered, setIsBreachHovered] = useState(false);
+
   const points = MONTHS.map((_, i) => ({
     x: PAD_X + i * ((CHART_W - PAD_X * 2) / (MONTHS.length - 1)),
     y: valueToY(VALUES[i]),
@@ -310,6 +324,26 @@ function ForecastChart() {
   const thresholdY = valueToY(THRESHOLD_VALUE);
   const todayIndex = 4; // "Jul" — anchors the live forecast
   const todayX = points[todayIndex].x;
+
+  const activePoint =
+    activePointIndex !== null
+      ? {
+          month: FULL_MONTHS[activePointIndex],
+          storedTons: (VALUES[activePointIndex] * 0.245).toFixed(1),
+          exceedsLimit: VALUES[activePointIndex] >= THRESHOLD_VALUE,
+          x: points[activePointIndex].x,
+          y: points[activePointIndex].y,
+        }
+      : null;
+
+  function handleChartHover(clientX: number, rect: DOMRect) {
+    const rawX = clientX - rect.left;
+    const chartX = (rawX / rect.width) * CHART_W;
+    const clampedX = Math.max(PAD_X, Math.min(CHART_W - PAD_X, chartX));
+    const segmentWidth = (CHART_W - PAD_X * 2) / (MONTHS.length - 1);
+    const nearestIndex = Math.round((clampedX - PAD_X) / segmentWidth);
+    setActivePointIndex(Math.max(0, Math.min(MONTHS.length - 1, nearestIndex)));
+  }
 
   // Crossing point interpolated between the Aug (index 5) and Sep (index 6) samples.
   const crossX =
@@ -361,14 +395,61 @@ function ForecastChart() {
         <path d={areaPath} fill="url(#forecastFill)" stroke="none" />
         <path d={linePath} fill="none" stroke="var(--accent)" strokeWidth={3} strokeLinecap="round" />
 
+        {/* hover overlay */}
+        <rect
+          x={PAD_X}
+          y={TOP}
+          width={CHART_W - PAD_X * 2}
+          height={BASE - TOP}
+          fill="transparent"
+          onMouseMove={(event) => handleChartHover(event.clientX, event.currentTarget.getBoundingClientRect())}
+          onMouseLeave={() => setActivePointIndex(null)}
+        />
+
+        {/* crosshair + active indicator */}
+        {activePoint && (
+          <>
+            <line
+              x1={activePoint.x}
+              y1={TOP}
+              x2={activePoint.x}
+              y2={BASE}
+              stroke="#475569"
+              strokeWidth={1}
+              strokeDasharray="4 4"
+              opacity={0.85}
+            />
+            <circle cx={activePoint.x} cy={activePoint.y} r={10} fill="var(--accent)" opacity={0.16} />
+            <circle cx={activePoint.x} cy={activePoint.y} r={5.2} fill="white" stroke="var(--accent)" strokeWidth={2.5} />
+          </>
+        )}
+
         {/* data points */}
         {points.map((p, i) => (
-          <circle key={MONTHS[i]} cx={p.x} cy={p.y} r={3.5} fill="white" stroke="var(--accent)" strokeWidth={2} />
+          <circle
+            key={MONTHS[i]}
+            cx={p.x}
+            cy={p.y}
+            r={activePointIndex === i ? 4.5 : 3.5}
+            fill="white"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            className="transition-all duration-150"
+          />
         ))}
 
         {/* crossing marker */}
-        <circle cx={crossX} cy={thresholdY} r={5} fill="#DC2626" />
-        <circle cx={crossX} cy={thresholdY} r={9} fill="#DC2626" opacity={0.18} />
+        <g onMouseEnter={() => setIsBreachHovered(true)} onMouseLeave={() => setIsBreachHovered(false)}>
+          <circle cx={crossX} cy={thresholdY} r={5} fill="#DC2626" className="cursor-pointer" />
+          <circle
+            cx={crossX}
+            cy={thresholdY}
+            r={isBreachHovered ? 12 : 9}
+            fill="#DC2626"
+            opacity={isBreachHovered ? 0.25 : 0.18}
+            className={`transition-all duration-200 ${isBreachHovered ? "animate-pulse" : ""}`}
+          />
+        </g>
 
         {/* month labels */}
         {points.map((p, i) => (
@@ -377,6 +458,23 @@ function ForecastChart() {
           </text>
         ))}
       </svg>
+
+      {activePoint && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-lg bg-slate-900/95 px-3 py-2 text-xs text-white shadow-lg"
+          style={{
+            left: `${(activePoint.x / CHART_W) * 100}%`,
+            top: `${(activePoint.y / CHART_H) * 100}%`,
+            transform: "translate(-50%, -120%)",
+          }}
+        >
+          <p className="font-semibold text-slate-100">{activePoint.month}</p>
+          <p className="text-slate-200">{activePoint.storedTons} Metric Tons</p>
+          <p className={`font-medium ${activePoint.exceedsLimit ? "text-amber-300" : "text-emerald-300"}`}>
+            {activePoint.exceedsLimit ? "⚠️ Exceeds Statutory Limit" : "Within 180-Day Limit"}
+          </p>
+        </div>
+      )}
 
       <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700">
         <Truck className="h-3.5 w-3.5" />
@@ -1132,6 +1230,7 @@ function EnterpriseView({
   queue,
   onInspect,
   onViewRecord,
+  onReviewCardClick,
   isClassifying,
   classifyingBatchId,
   isGenerating,
@@ -1141,6 +1240,7 @@ function EnterpriseView({
   queue: QueueBatch[];
   onInspect: (b: QueueBatch) => void | Promise<void>;
   onViewRecord: (b: QueueBatch) => void;
+  onReviewCardClick: () => void;
   isClassifying: boolean;
   classifyingBatchId: string | null;
   isGenerating: boolean;
@@ -1148,6 +1248,22 @@ function EnterpriseView({
   onGoToIntake: () => void;
 }) {
   const pendingCount = queue.filter((b) => b.status === "pending" || b.requiresHumanReview === true).length;
+  const [co2CardBump, setCo2CardBump] = useState(false);
+
+  const co2AvoidedTons = (
+    12.4 +
+    queue.reduce((sum, item) => {
+      const rawWeight = (item as unknown as { weight?: string | number }).weight ?? item.weightKg;
+      return sum + (parseFloat(String(rawWeight)) || 0) * 0.0035;
+    }, 0)
+  ).toFixed(1);
+
+  useEffect(() => {
+    setCo2CardBump(true);
+    const t = setTimeout(() => setCo2CardBump(false), 240);
+    return () => clearTimeout(t);
+  }, [co2AvoidedTons]);
+
   const canGenerate = queue.length > 0 && pendingCount === 0;
   const generateDisabledReason =
     queue.length === 0
@@ -1173,21 +1289,56 @@ function EnterpriseView({
         </article>
 
         <div className="flex flex-col gap-5">
-          <article className="flex-1 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 p-5 shadow-sm">
+          <article
+            className={`flex-1 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 p-5 shadow-sm transition-all duration-500 ${
+              co2CardBump ? "scale-[1.01]" : "scale-100"
+            }`}
+          >
             <div className="flex items-start justify-between">
               <h2 className="text-sm font-semibold text-slate-700">CO2 Avoided</h2>
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             </div>
-            <p className="mt-4 text-3xl font-bold tracking-tight text-emerald-700">12.4 Tons</p>
+            <p className="mt-4 text-3xl font-bold tracking-tight text-emerald-700 transition-all duration-500">
+              {co2AvoidedTons} Tons
+            </p>
             <p className="mt-3 text-sm text-slate-600">Projected impact from circular decommissioning optimization.</p>
           </article>
 
-          <article className="flex-1 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50 p-5 shadow-sm">
+          <article
+            role={pendingCount > 0 ? "button" : undefined}
+            tabIndex={pendingCount > 0 ? 0 : undefined}
+            onClick={pendingCount > 0 ? onReviewCardClick : undefined}
+            onKeyDown={
+              pendingCount > 0
+                ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onReviewCardClick();
+                    }
+                  }
+                : undefined
+            }
+            className={`flex-1 rounded-2xl p-5 shadow-sm transition-colors duration-300 ${
+              pendingCount > 0
+                ? "cursor-pointer border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50 hover:shadow-md transition-all"
+                : "border border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50"
+            }`}
+          >
             <div className="flex items-start justify-between">
               <h2 className="text-sm font-semibold text-slate-700">Requires Human Review</h2>
-              <Clock3 className="h-5 w-5 text-amber-600" />
+              {pendingCount > 0 ? (
+                <AlertTriangle className="h-5 w-5 animate-pulse text-amber-600" />
+              ) : (
+                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              )}
             </div>
-            <p className="mt-4 text-3xl font-bold tracking-tight text-amber-700">{pendingCount} Item</p>
+            <p
+              className={`mt-4 text-3xl font-bold tracking-tight ${
+                pendingCount > 0 ? "text-amber-700" : "text-emerald-700"
+              }`}
+            >
+              {pendingCount} Item{pendingCount === 1 ? "" : "s"}
+            </p>
             <p className="mt-3 text-sm text-slate-600">Critical classification ambiguity flagged by the AI workflow.</p>
           </article>
         </div>
@@ -2332,6 +2483,12 @@ export default function Page() {
     }
   }
 
+  function handleReviewCardClick() {
+    const firstPendingBatch = queue.find((b) => b.status === "pending" || b.requiresHumanReview === true);
+    if (!firstPendingBatch) return;
+    setSelectedLog(firstPendingBatch);
+  }
+
   const theme = THEME[activeView];
   const isRegulator = activeView === "regulator";
   const isLegalModalOpen = selectedLog !== null;
@@ -2360,6 +2517,7 @@ export default function Page() {
             queue={queue}
             onInspect={handleInspect}
             onViewRecord={(batch) => setSelectedLog(batch)}
+            onReviewCardClick={handleReviewCardClick}
             isClassifying={isClassifying}
             classifyingBatchId={classifyingBatchId}
             isGenerating={isGenerating}
