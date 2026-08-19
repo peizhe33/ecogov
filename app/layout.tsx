@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import '../styles/globals.css';
-import { Leaf, Home, ClipboardEdit, Archive, FileText, Settings } from 'lucide-react';
+import { Home, ClipboardEdit, Archive, FileText, Settings } from 'lucide-react';
 import { ViewContext, TabContext, type ViewMode, type TabMode } from './view-context';
 
 type RootLayoutProps = {
@@ -28,9 +28,11 @@ export default function RootLayout({ children }: RootLayoutProps) {
           <aside className="fixed left-0 top-0 h-full w-72 bg-slate-900 text-slate-100 shadow-2xl">
             <div className="border-b border-slate-800 px-6 py-6">
               <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-emerald-500/20 p-2">
-                  <Leaf className="h-5 w-5 text-emerald-300" />
-                </div>
+                <img
+                  src="/ecogov-logo.png"
+                  alt="EcoGov AI logo"
+                  className="h-20 w-20 object-contain"
+                />
                 <div>
                   <p className="text-base font-semibold tracking-wide">EcoGov AI</p>
                   <p className="text-xs text-slate-400">B2G Intelligence Console</p>
